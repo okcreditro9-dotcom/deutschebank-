@@ -8,6 +8,8 @@ import {
   StandingOrder 
 } from '../types/banking';
 import { GERMAN_ID_SAMPLE_SVG } from '../utils/germanIdSample';
+import { db } from '../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export interface UserUploadedDocument {
   name: string;
@@ -47,37 +49,37 @@ const INITIAL_USERS: ManagedUser[] = [
     pin: '12345',
     account: {
       accountHolder: 'Maximilian Weber',
-      accountType: 'AURA Girokonto Premium',
+      accountType: 'NordDeutscheBank Girokonto',
       iban: 'DE89 3704 0044 0532 0130 00',
-      bic: 'AURADEBBXXX',
-      balance: 1250.0,
-      availableBalance: 1250.0,
+      bic: 'NDEBDEFFXXX',
+      balance: 0.0,
+      availableBalance: 0.0,
       pendingBalance: 0.0,
-      dispoLimit: 2500.0,
+      dispoLimit: 0.0,
       interestRateDeposit: 2.75,
       freistellungsAuftragUsed: 0.0,
       freistellungsAuftragTotal: 1000.0,
       openedDate: '2026-02-01',
     },
     card: {
-      status: 'pending', // In Prüfung durch die Bank
-      cardHolder: 'MAXIMILIAN WEBER',
-      cardNumber: '4532 8923 1245 6192',
-      cardNumberMasked: '•••• •••• •••• 6192',
-      expiryMonth: '10',
-      expiryYear: '30',
-      cvv: '739',
-      bankName: 'Deutsche Bank AG',
-      cardBalance: 245.0, // Mindestguthaben >= 148 € erfüllt
-      cardType: 'Visa',
+      status: 'none',
+      cardHolder: '',
+      cardNumber: '',
+      cardNumberMasked: 'Keine Karte hinterlegt',
+      expiryMonth: '',
+      expiryYear: '',
+      cvv: '',
+      bankName: '',
+      cardBalance: 0.0,
+      cardType: 'Debit',
       submittedAt: '2026-09-27',
       isFrozen: false,
       dailyLimit: 2500,
       monthlyLimit: 10000,
-      contactlessEnabled: true,
-      onlinePaymentsEnabled: true,
-      atmWithdrawalsEnabled: true,
-      foreignCurrencyEnabled: true,
+      contactlessEnabled: false,
+      onlinePaymentsEnabled: false,
+      atmWithdrawalsEnabled: false,
+      foreignCurrencyEnabled: false,
     },
     credit: null,
     transactions: [],
@@ -112,38 +114,38 @@ const INITIAL_USERS: ManagedUser[] = [
     pin: '12345',
     account: {
       accountHolder: 'Sophie Hoffmann',
-      accountType: 'AURA Girokonto Classic',
+      accountType: 'NordDeutscheBank Girokonto',
       iban: 'DE12 5005 0201 0987 6543 21',
-      bic: 'AURADEBBXXX',
-      balance: 3420.50,
-      availableBalance: 3420.50,
+      bic: 'NDEBDEFFXXX',
+      balance: 0.0,
+      availableBalance: 0.0,
       pendingBalance: 0.0,
-      dispoLimit: 3000.0,
+      dispoLimit: 0.0,
       interestRateDeposit: 2.75,
-      freistellungsAuftragUsed: 120.0,
+      freistellungsAuftragUsed: 0.0,
       freistellungsAuftragTotal: 1000.0,
       openedDate: '2026-01-15',
     },
     card: {
-      status: 'approved', // Bereits durch Bank freigeschaltet
-      cardHolder: 'SOPHIE HOFFMANN',
-      cardNumber: '5214 7712 9901 3840',
-      cardNumberMasked: '•••• •••• •••• 3840',
-      expiryMonth: '08',
-      expiryYear: '29',
-      cvv: '412',
-      bankName: 'Berliner Sparkasse',
-      cardBalance: 380.0,
-      cardType: 'Mastercard',
+      status: 'none',
+      cardHolder: '',
+      cardNumber: '',
+      cardNumberMasked: 'Keine Karte hinterlegt',
+      expiryMonth: '',
+      expiryYear: '',
+      cvv: '',
+      bankName: '',
+      cardBalance: 0.0,
+      cardType: 'Debit',
       submittedAt: '2026-01-15',
       reviewedAt: '2026-01-16',
       isFrozen: false,
       dailyLimit: 2500,
       monthlyLimit: 10000,
-      contactlessEnabled: true,
-      onlinePaymentsEnabled: true,
-      atmWithdrawalsEnabled: true,
-      foreignCurrencyEnabled: true,
+      contactlessEnabled: false,
+      onlinePaymentsEnabled: false,
+      atmWithdrawalsEnabled: false,
+      foreignCurrencyEnabled: false,
     },
     credit: null,
     transactions: [],
@@ -151,8 +153,8 @@ const INITIAL_USERS: ManagedUser[] = [
     notifications: [
       {
         id: 'notif-card-approved-init',
-        title: 'Bankkarte verifiziert & freigeschaltet',
-        message: 'Ihre persönliche Bankkarte wurde erfolgreich von der Bank bestätigt. Sie können uneingeschränkt Überweisungen durchführen.',
+        title: 'Konto verifiziert',
+        message: 'Ihr Girokonto bei der NordDeutscheBank ist aktiv.',
         timestamp: 'Vor kurzem',
         isRead: false,
         category: 'security',
@@ -170,13 +172,13 @@ const INITIAL_USERS: ManagedUser[] = [
     pin: '12345',
     account: {
       accountHolder: 'Lukas Schneider',
-      accountType: 'AURA Girokonto Start',
+      accountType: 'NordDeutscheBank Girokonto',
       iban: 'DE77 2005 0550 5544 3322 11',
-      bic: 'AURADEBBXXX',
-      balance: 850.0,
-      availableBalance: 850.0,
+      bic: 'NDEBDEFFXXX',
+      balance: 0.0,
+      availableBalance: 0.0,
       pendingBalance: 0.0,
-      dispoLimit: 1500.0,
+      dispoLimit: 0.0,
       interestRateDeposit: 2.75,
       freistellungsAuftragUsed: 0.0,
       freistellungsAuftragTotal: 1000.0,
@@ -241,26 +243,57 @@ export const UserStore = {
 
   getUsers(): ManagedUser[] {
     if (typeof window === 'undefined') return INITIAL_USERS;
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+    const possibleKeys = [
+      STORAGE_KEY,
+      'aura_banking_users_v5',
+      'aura_banking_users_v4',
+      'aura_banking_users_v3',
+      'aura_banking_users_v2',
+      'aura_banking_users',
+      'nordbank_users',
+      'norddeutschebank_users',
+    ];
+
+    const userMap = new Map<string, ManagedUser>();
+
+    // 1. Initial base users
+    INITIAL_USERS.forEach((u) => userMap.set(u.id, u));
+
+    // 2. Fusion de TOUS les stockages précédents pour ne perdre AUCUN compte existant
+    for (const key of possibleKeys) {
+      try {
+        const stored = localStorage.getItem(key);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((u: ManagedUser) => {
+              if (u && (u.id || u.email)) {
+                // S'assurer que le faux découvert de 2500 € est ramené à 0,00 €
+                if (u.account && u.account.dispoLimit === 2500) {
+                  u.account.dispoLimit = 0.0;
+                }
+                userMap.set(u.id || u.email, u);
+              }
+            });
+          }
         }
+      } catch (e) {
+        // ignorer les clés invalides
       }
-    } catch (e) {
-      console.error('Failed to load users from localStorage', e);
     }
-    // Default fallback
-    this.saveUsers(INITIAL_USERS);
-    return INITIAL_USERS;
+
+    const merged = Array.from(userMap.values());
+    return merged;
   },
 
   saveUsers(users: ManagedUser[]): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+      const serialized = JSON.stringify(users);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      // Doublon de sécurité pour que le compte ne disparaisse jamais
+      localStorage.setItem('nordbank_users', serialized);
+      localStorage.setItem('aura_banking_users', serialized);
     } catch (e) {
       console.error('Failed to save users to localStorage', e);
     }
@@ -271,11 +304,18 @@ export const UserStore = {
     return users.find((u) => u.id === id);
   },
 
-  // Authentification directe auprès du serveur pour autoriser la connexion sur n'importe quel téléphone ou navigateur
+  // Authentification directe : vérifie le cache local, le serveur ET Firebase Firestore
   async authenticateUser(loginInput: string, pinInput: string): Promise<ManagedUser | undefined> {
     const cleanLogin = loginInput.trim();
     const cleanPin = pinInput.trim();
 
+    // 1. Recherche dans le cache local (fusion de tous les comptes enregistrés)
+    const localUser = this.findUserByCredentials(cleanLogin, cleanPin);
+    if (localUser) {
+      return localUser;
+    }
+
+    // 2. Recherche sur l'API serveur
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -287,7 +327,6 @@ export const UserStore = {
         const data = await res.json();
         if (data.success && data.user) {
           const user: ManagedUser = data.user;
-          // Met à jour la mémoire locale et le cache
           const users = this.getUsers();
           const idx = users.findIndex((u) => u.id === user.id);
           if (idx !== -1) {
@@ -300,11 +339,32 @@ export const UserStore = {
         }
       }
     } catch (err) {
-      console.warn('[UserStore] Échec réseau serveur, repli sur le cache local:', err);
+      console.warn('[UserStore] Échec réseau serveur, tentative Firestore:', err);
     }
 
-    // Repli local si serveur indisponible
-    return this.findUserByCredentials(cleanLogin, cleanPin);
+    // 3. Recherche dans Firestore Cloud (pour les utilisateurs créés sur d'autres appareils/Vercel)
+    try {
+      if (db) {
+        const safeDocId = cleanLogin.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+        const userDocRef = doc(db, 'users', safeDocId);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const cloudData = userDoc.data() as ManagedUser;
+          if (cloudData && cloudData.pin === cleanPin) {
+            const users = this.getUsers();
+            if (!users.find(u => u.id === cloudData.id)) {
+              users.push(cloudData);
+              this.saveUsers(users);
+            }
+            return cloudData;
+          }
+        }
+      }
+    } catch (firestoreErr) {
+      console.warn('[UserStore] Recherche Firestore fallback:', firestoreErr);
+    }
+
+    return undefined;
   },
 
   findUserByCredentials(loginInput: string, pinInput: string): ManagedUser | undefined {
@@ -341,30 +401,32 @@ export const UserStore = {
     const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
 
+    // 1. Enregistrement local garanti
+    const localUser = this.registerNewUser(name, email, phone, pin, initialBalance);
+
+    // 2. Synchronisation serveur
     try {
-      const res = await fetch('/api/auth/register', {
+      await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, email: cleanEmail, phone, pin, initialBalance }),
+        body: JSON.stringify({ name: cleanName, email: cleanEmail, phone, pin, initialBalance: 0 }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.user) {
-          const user: ManagedUser = data.user;
-          const users = this.getUsers();
-          const idx = users.findIndex((u) => u.id === user.id);
-          if (idx !== -1) users[idx] = user;
-          else users.push(user);
-          this.saveUsers(users);
-          return user;
-        }
-      }
     } catch (err) {
-      console.warn('[UserStore] Erreur création serveur, création locale de secours:', err);
+      // mode hors ligne ou Vercel
     }
 
-    return this.registerNewUser(name, email, phone, pin, initialBalance);
+    // 3. Sauvegarde dans Firestore Cloud pour disponibilité universelle sur tous les téléphones
+    try {
+      if (db) {
+        const safeDocId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+        await setDoc(doc(db, 'users', safeDocId), localUser, { merge: true });
+        await setDoc(doc(db, 'users', localUser.id), localUser, { merge: true });
+      }
+    } catch (e) {
+      console.warn('[UserStore] Erreur sauvegarde Firestore:', e);
+    }
+
+    return localUser;
   },
 
   registerNewUser(name: string, email: string, phone: string = '', pin: string = '12345', initialBalance: number = 0): ManagedUser {
@@ -382,13 +444,13 @@ export const UserStore = {
       pin: pin || '12345',
       account: {
         accountHolder: cleanName,
-        accountType: 'AURA Girokonto',
+        accountType: 'NordDeutscheBank Girokonto',
         iban: newIban,
-        bic: 'AURADEBBXXX',
-        balance: initialBalance > 0 ? initialBalance : 0.0,
-        availableBalance: initialBalance > 0 ? initialBalance : 0.0,
+        bic: 'NDEBDEFFXXX',
+        balance: 0.0,
+        availableBalance: 0.0,
         pendingBalance: 0.0,
-        dispoLimit: 2500.0,
+        dispoLimit: 0.0, // Strictement 0,00 € : aucun découvert factice de 2500 €
         interestRateDeposit: 2.75,
         freistellungsAuftragUsed: 0.0,
         freistellungsAuftragTotal: 1000.0,
@@ -414,27 +476,13 @@ export const UserStore = {
         foreignCurrencyEnabled: false,
       },
       credit: null,
-      transactions: initialBalance > 0 ? [
-        {
-          id: `tx-init-${Date.now()}`,
-          recipientOrSender: 'Ersteinlage / Neueröffnung',
-          iban: newIban,
-          purpose: 'Ersteinlage bei Kontoeröffnung',
-          amount: initialBalance,
-          type: 'income',
-          date: new Date().toISOString().split('T')[0],
-          timestamp: Date.now(),
-          category: 'Finanzen & Kredit',
-          status: 'gebucht',
-          referenceId: `REF-INIT-${Date.now()}`,
-        }
-      ] : [], // Neuer Kunde ohne fiktive Buchungen
+      transactions: [], // 0 opération effectuée par défaut
       application: null,
       notifications: [
         {
           id: `notif-welcome-${Date.now()}`,
           title: 'Kontoeröffnung erfolgreich',
-          message: `Herzlich willkommen bei der AURA Bank, ${cleanName}! Ihr Girokonto ist vollständig eingerichtet und einsatzbereit.`,
+          message: `Herzlich willkommen bei der NordDeutscheBank, ${cleanName}! Ihr Girokonto ist vollständig eingerichtet und einsatzbereit.`,
           timestamp: 'Gerade eben',
           isRead: false,
           category: 'banking',
@@ -445,7 +493,14 @@ export const UserStore = {
       status: 'Aktiv',
     };
 
-    users.push(newUser);
+    // Vérifier si l'utilisateur existe déjà
+    const existingIdx = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (existingIdx !== -1) {
+      users[existingIdx] = { ...users[existingIdx], ...newUser, id: users[existingIdx].id };
+    } else {
+      users.push(newUser);
+    }
+
     this.saveUsers(users);
     return newUser;
   },

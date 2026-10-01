@@ -12,6 +12,7 @@ import { ProfileView } from './components/views/ProfileView';
 import { AuthView } from './components/views/AuthView';
 import { AdminDashboardView } from './components/views/AdminDashboardView';
 import { UserStore, ManagedUser } from './data/userStore';
+import { saveUserToFirestore, saveTransactionToFirestore } from './firebase';
 
 // Modals
 import { TransferModal } from './components/modals/TransferModal';
@@ -156,7 +157,7 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Synchronisation avec UserStore pour persistance en temps réel
+  // Synchronisation avec UserStore et Firestore pour persistance en temps réel
   const syncWithUserStore = (updatedAccount?: BankAccount, updatedTransactions?: Transaction[], updatedCard?: DebitCard, updatedCredit?: CreditAccount | null) => {
     if (!currentUser.id) return;
     const existing = UserStore.getUserById(currentUser.id);
@@ -169,6 +170,16 @@ export default function App() {
         credit: updatedCredit !== undefined ? updatedCredit : credit,
       };
       UserStore.updateUser(updated);
+
+      // Persist to Cloud Firestore database
+      saveUserToFirestore(currentUser.id, {
+        account: updated.account,
+        card: updated.card,
+        credit: updated.credit,
+        name: currentUser.name,
+        email: currentUser.email,
+        updatedAt: new Date().toISOString()
+      }).catch((e) => console.warn('Firestore sync status:', e));
     }
   };
 
@@ -194,6 +205,11 @@ export default function App() {
       category: 'banking',
     };
     setNotifications((prev) => [newNotif, ...prev]);
+
+    // Persist transaction to Firestore sub-collection
+    if (currentUser.id) {
+      saveTransactionToFirestore(currentUser.id, newTx).catch((e) => console.warn('Firestore tx status:', e));
+    }
 
     syncWithUserStore(updatedAccount, updatedTxList);
   };
@@ -309,7 +325,7 @@ export default function App() {
         balance: 0.0,
         availableBalance: 0.0,
         pendingBalance: 0.0,
-        dispoLimit: 2500.0,
+        dispoLimit: 0.0,
         interestRateDeposit: 2.75,
         freistellungsAuftragUsed: 0.0,
         freistellungsAuftragTotal: 1000.0,
@@ -592,6 +608,9 @@ export default function App() {
               initialAmount={applicationPreset.amount}
               initialTerm={applicationPreset.term}
               initialPurpose={applicationPreset.purpose}
+              userEmail={currentUser.email}
+              userPhone={UserStore.getUserById(currentUser.id || '')?.phone || ''}
+              userName={currentUser.name}
               onClose={() => setSubView(null)}
               onSubmitSuccess={handleLoanApplicationSuccess}
               onShowToast={addToast}

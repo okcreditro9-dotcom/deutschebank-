@@ -1,0 +1,6 @@
+{
+  "name": "AURA Banking & Kredit",
+  "description": "Exklusive moderne Banking- und Kredit-Applikation für den deutschen Markt mit digitalem Kreditrechner, Mehrschritt-Antrag, Kontoführung und detaillierten Finanzanalysen im Demo-Modus.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

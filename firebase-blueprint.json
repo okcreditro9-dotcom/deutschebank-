@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "AURA Bank user profile with banking account details, transactions, and status",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user ID or UID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of customer"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address"
+        },
+        "phone": {
+          "type": "string",
+          "description": "User phone number"
+        },
+        "pin": {
+          "type": "string",
+          "description": "Hashed or secret customer access PIN"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A banking transaction entry",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Transaction ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Associated user ID"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Amount in EUR"
+        },
+        "type": {
+          "type": "string",
+          "description": "income or expense"
+        },
+        "recipientOrSender": {
+          "type": "string",
+          "description": "Recipient or sender name"
+        },
+        "purpose": {
+          "type": "string",
+          "description": "Transfer purpose"
+        },
+        "date": {
+          "type": "string",
+          "description": "ISO date"
+        }
+      },
+      "required": ["id", "userId", "amount", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of user bank account records"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Sub-collection of user transactions"
+    }
+  }
+}

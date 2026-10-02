@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowUpRight, 
   ArrowDownLeft, 
@@ -46,6 +46,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [hideBalances, setHideBalances] = useState(false);
   const [copiedIban, setCopiedIban] = useState(false);
   const [chartPeriod, setChartPeriod] = useState<'6m' | '30d'>('6m');
+
+  // Assurer que le client tombe directement et entièrement sur le solde de son compte dès connexion
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+  }, []);
 
   const copyIban = () => {
     navigator.clipboard?.writeText(account.iban.replace(/\s+/g, ''));
@@ -347,16 +356,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="flex items-center gap-3 w-full md:w-auto">
             <button
               onClick={() => onNavigateTab('credit')}
-              className="flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md transition-colors cursor-pointer"
+              className="w-full md:w-auto flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md transition-colors cursor-pointer"
             >
-              <span>{credit ? 'Kredit verwalten' : 'Kredit berechnen'}</span>
+              <span>{credit ? 'Kredit verwalten' : 'Jetzt online beantragen'}</span>
               <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => onOpenSubView('kreditrechner')}
-              className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs border border-white/10 transition-colors cursor-pointer"
-            >
-              Rechner
             </button>
           </div>
         </div>

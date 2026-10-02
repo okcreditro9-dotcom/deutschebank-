@@ -11,7 +11,7 @@ import { TransactionsView } from './components/views/TransactionsView';
 import { ProfileView } from './components/views/ProfileView';
 import { AuthView } from './components/views/AuthView';
 import { AdminDashboardView } from './components/views/AdminDashboardView';
-import { UserStore, ManagedUser } from './data/userStore';
+import { UserStore, ManagedUser, ensureCompleteUser } from './data/userStore';
 import { saveUserToFirestore, saveTransactionToFirestore } from './firebase';
 
 // Modals
@@ -304,15 +304,23 @@ export default function App() {
     setViewingAsAdminClient(false);
     setActiveTab('home');
 
+    // Assurer que le client tombe directement sur le haut de sa page et sur le solde de son compte
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+
     if (managedUser) {
-      setCurrentUser({ id: managedUser.id, name: managedUser.name, email: managedUser.email });
-      setAccount(managedUser.account);
-      setTransactions(managedUser.transactions);
-      setCredit(managedUser.credit);
-      setCard(managedUser.card);
-      setNotifications(managedUser.notifications);
-      setStandingOrders(managedUser.standingOrders);
-      setApplication(managedUser.application);
+      const safe = ensureCompleteUser(managedUser, email);
+      setCurrentUser({ id: safe.id, name: safe.name, email: safe.email });
+      setAccount(safe.account);
+      setTransactions(safe.transactions || []);
+      setCredit(safe.credit || null);
+      setCard(safe.card);
+      setNotifications(safe.notifications || []);
+      setStandingOrders(safe.standingOrders || []);
+      setApplication(safe.application || null);
     } else if (isNewUser) {
       // Neuer Kunde ohne fiktive Buchungen
       const newIban = `DE89 3704 0044 ${Math.floor(1000000000 + Math.random() * 9000000000)}`;
@@ -389,10 +397,10 @@ export default function App() {
     setIsAdminAuthenticated(false);
     setIsAuthenticated(false);
     setViewingAsAdminClient(false);
-    addToast('Déconnexion administrateur', 'Vous avez été déconnecté.', 'info');
+    addToast('Administrator abgemeldet', 'Sie wurden erfolgreich abgemeldet.', 'info');
   };
 
-  // Aperçu administrateur du compte client ("Voir l'espace de ce client")
+  // Administrator-Kundenansicht
   const handleAdminViewAsClient = (user: ManagedUser) => {
     setCurrentUser({ id: user.id, name: user.name, email: user.email });
     setAccount(user.account);
@@ -404,21 +412,21 @@ export default function App() {
     setApplication(user.application);
     setViewingAsAdminClient(true);
     setActiveTab('home');
-    addToast('Aperçu du compte client', `Vous visualisez l'espace de ${user.name}.`, 'info');
+    addToast('Kundenansicht aktiviert', `Sie befinden sich im Bereich von ${user.name}.`, 'info');
   };
 
   const handleClientLogout = () => {
     setIsAuthenticated(false);
     setIsAdminAuthenticated(false);
     setViewingAsAdminClient(false);
-    addToast('Déconnexion réussie', 'À bientôt sur AURA Bank.', 'info');
+    addToast('Erfolgreich abgemeldet', 'Auf Wiedersehen bei der NordDeutscheBank.', 'info');
   };
 
   const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
 
   const markAllNotificationsAsRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    addToast('Toutes les notifications sont marquées comme lues', undefined, 'info');
+    addToast('Alle Benachrichtigungen als gelesen markiert', undefined, 'info');
   };
 
   return (
@@ -455,14 +463,14 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="font-bold text-slate-200">
-                  Mode Administrateur : Vous visualisez l'espace de <strong className="text-white">{currentUser.name}</strong>
+                  Administrator-Modus: Sie visualisieren den Bereich von <strong className="text-white">{currentUser.name}</strong>
                 </span>
               </div>
               <button
                 onClick={() => setViewingAsAdminClient(false)}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-1 rounded-lg transition-colors cursor-pointer"
               >
-                ← Retour au Dashboard Administrateur
+                ← Zurück zum Administrator-Dashboard
               </button>
             </div>
           )}
@@ -475,12 +483,12 @@ export default function App() {
           }`}>
             {/* Responsive Smartphone Frame Toggle Bar on Desktop */}
             <div className="hidden lg:flex items-center justify-between px-6 py-1.5 bg-slate-200/60 dark:bg-slate-900/60 text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
-              <span>AURA Digital Banking Experience</span>
+              <span>NordDeutscheBank Digitales Banking</span>
               <button
                 onClick={() => setIsMobileFrameView(!isMobileFrameView)}
                 className="hover:text-emerald-600 dark:hover:text-emerald-400 font-semibold cursor-pointer underline"
               >
-                {isMobileFrameView ? 'Agrandir l\'affichage (Mode Bureau)' : 'Simuler format Smartphone'}
+                {isMobileFrameView ? 'Desktop-Ansicht vergrößern' : 'Smartphone-Format simulieren'}
               </button>
             </div>
 
@@ -539,9 +547,12 @@ export default function App() {
                 <CreditView
                   credit={credit}
                   application={application}
+                  userEmail={currentUser.email}
+                  userPhone={UserStore.getUserById(currentUser.id || '')?.phone || ''}
+                  userName={currentUser.name}
                   onBack={() => setActiveTab('home')}
                   onOpenSubView={(view) => setSubView(view)}
-                  onStartApplicationWithParams={handleStartApplicationWithParams}
+                  onSubmitSuccess={handleLoanApplicationSuccess}
                   onShowToast={addToast}
                 />
               )}

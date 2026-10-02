@@ -9,7 +9,7 @@ import {
 } from '../types/banking';
 import { GERMAN_ID_SAMPLE_SVG } from '../utils/germanIdSample';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 export interface UserUploadedDocument {
   name: string;
@@ -222,6 +222,90 @@ const INITIAL_USERS: ManagedUser[] = [
   },
 ];
 
+// Garantit qu'un objet utilisateur est toujours complet et ne contient jamais de propriétés undefined critiques
+export function ensureCompleteUser(partial: Partial<ManagedUser> | null | undefined, fallbackLogin?: string): ManagedUser {
+  const p = partial || {};
+  const cleanFallback = (fallbackLogin || '').trim();
+  const rawEmail = p.email || (cleanFallback.includes('@') ? cleanFallback : 'kunde@nordbank-portal.de');
+  const cleanEmail = rawEmail.toLowerCase();
+  
+  let name = p.name || p.account?.accountHolder;
+  if (!name || name === 'undefined') {
+    if (cleanEmail.includes('@')) {
+      const part = cleanEmail.split('@')[0];
+      name = part.charAt(0).toUpperCase() + part.slice(1);
+    } else {
+      name = 'Kunde';
+    }
+  }
+
+  const phone = p.phone || '+49 170 0000000';
+  const id = p.id || `usr-${Date.now()}`;
+  const pin = p.pin || '12345';
+  const newIban = p.account?.iban || `DE89 3704 0044 ${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+
+  const account: BankAccount = {
+    accountHolder: name,
+    accountType: p.account?.accountType || 'NordDeutscheBank Girokonto',
+    iban: newIban,
+    bic: p.account?.bic || 'NDEBDEFFXXX',
+    balance: typeof p.account?.balance === 'number' && !isNaN(p.account.balance) ? p.account.balance : 0.0,
+    availableBalance: typeof p.account?.availableBalance === 'number' && !isNaN(p.account.availableBalance) ? p.account.availableBalance : 0.0,
+    pendingBalance: typeof p.account?.pendingBalance === 'number' && !isNaN(p.account.pendingBalance) ? p.account.pendingBalance : 0.0,
+    dispoLimit: typeof p.account?.dispoLimit === 'number' && !isNaN(p.account.dispoLimit) ? p.account.dispoLimit : 0.0,
+    interestRateDeposit: p.account?.interestRateDeposit || 2.75,
+    freistellungsAuftragUsed: p.account?.freistellungsAuftragUsed || 0.0,
+    freistellungsAuftragTotal: p.account?.freistellungsAuftragTotal || 1000.0,
+    openedDate: p.account?.openedDate || new Date().toLocaleDateString('de-DE'),
+  };
+
+  const card: DebitCard = p.card || {
+    status: 'none',
+    cardHolder: '',
+    cardNumber: '',
+    cardNumberMasked: 'Keine Karte hinterlegt',
+    expiryMonth: '',
+    expiryYear: '',
+    cvv: '',
+    bankName: '',
+    cardBalance: 0,
+    cardType: 'Debit',
+    isFrozen: false,
+    dailyLimit: 2500,
+    monthlyLimit: 10000,
+    contactlessEnabled: false,
+    onlinePaymentsEnabled: false,
+    atmWithdrawalsEnabled: false,
+    foreignCurrencyEnabled: false,
+  };
+
+  return {
+    id,
+    name,
+    email: cleanEmail,
+    phone,
+    pin,
+    account,
+    card,
+    credit: p.credit || null,
+    transactions: Array.isArray(p.transactions) ? p.transactions : [],
+    application: p.application || null,
+    notifications: Array.isArray(p.notifications) && p.notifications.length > 0 ? p.notifications : [
+      {
+        id: `notif-welcome-${Date.now()}`,
+        title: 'Kontoeröffnung erfolgreich',
+        message: `Herzlich willkommen bei der NordDeutscheBank, ${name}! Ihr Girokonto ist vollständig eingerichtet.`,
+        timestamp: 'Gerade eben',
+        isRead: false,
+        category: 'banking',
+      }
+    ],
+    standingOrders: Array.isArray(p.standingOrders) ? p.standingOrders : [],
+    createdAt: p.createdAt || new Date().toISOString().split('T')[0],
+    status: p.status || 'Aktiv',
+  };
+}
+
 export const UserStore = {
   // Synchronise en arrière-plan avec la base de données centrale locale du serveur (/data/database.json)
   async syncWithServer(): Promise<ManagedUser[]> {
@@ -304,6 +388,43 @@ export const UserStore = {
     return users.find((u) => u.id === id);
   },
 
+  // Synchronisation globale depuis Firebase Firestore Cloud
+  async syncFromFirestore(): Promise<void> {
+    if (typeof window === 'undefined' || !db) return;
+    try {
+      const querySnapshot = await getDocs(collection(db, 'users'));
+      if (!querySnapshot.empty) {
+        const users = this.getUsers();
+        let changed = false;
+
+        querySnapshot.forEach((d) => {
+          const cloudUser = d.data() as ManagedUser;
+          if (cloudUser && cloudUser.email) {
+            const idx = users.findIndex(
+              (u) => u.id === cloudUser.id || u.email.toLowerCase() === cloudUser.email.toLowerCase()
+            );
+            if (idx === -1) {
+              users.push(cloudUser);
+              changed = true;
+            } else {
+              // Fusionner intelligemment sans écraser le PIN s'il est plus récent
+              if (cloudUser.pin && cloudUser.pin !== users[idx].pin) {
+                users[idx].pin = cloudUser.pin;
+                changed = true;
+              }
+            }
+          }
+        });
+
+        if (changed) {
+          this.saveUsers(users);
+        }
+      }
+    } catch (err) {
+      console.warn('[UserStore] syncFromFirestore différé:', err);
+    }
+  },
+
   // Authentification directe : vérifie le cache local, le serveur ET Firebase Firestore
   async authenticateUser(loginInput: string, pinInput: string): Promise<ManagedUser | undefined> {
     const cleanLogin = loginInput.trim();
@@ -312,7 +433,7 @@ export const UserStore = {
     // 1. Recherche dans le cache local (fusion de tous les comptes enregistrés)
     const localUser = this.findUserByCredentials(cleanLogin, cleanPin);
     if (localUser) {
-      return localUser;
+      return ensureCompleteUser(localUser, cleanLogin);
     }
 
     // 2. Recherche sur l'API serveur
@@ -326,7 +447,7 @@ export const UserStore = {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.user) {
-          const user: ManagedUser = data.user;
+          const user: ManagedUser = ensureCompleteUser(data.user, cleanLogin);
           const users = this.getUsers();
           const idx = users.findIndex((u) => u.id === user.id);
           if (idx !== -1) {
@@ -345,18 +466,44 @@ export const UserStore = {
     // 3. Recherche dans Firestore Cloud (pour les utilisateurs créés sur d'autres appareils/Vercel)
     try {
       if (db) {
+        // A. Recherche par identifiant direct (email safeId)
         const safeDocId = cleanLogin.toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
         const userDocRef = doc(db, 'users', safeDocId);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
-          const cloudData = userDoc.data() as ManagedUser;
+          const cloudData = userDoc.data() as Partial<ManagedUser>;
           if (cloudData && cloudData.pin === cleanPin) {
+            const completeUser = ensureCompleteUser(cloudData, cleanLogin);
             const users = this.getUsers();
-            if (!users.find(u => u.id === cloudData.id)) {
-              users.push(cloudData);
-              this.saveUsers(users);
+            const idx = users.findIndex(u => u.id === completeUser.id || u.email.toLowerCase() === completeUser.email.toLowerCase());
+            if (idx !== -1) {
+              users[idx] = completeUser;
+            } else {
+              users.push(completeUser);
             }
-            return cloudData;
+            this.saveUsers(users);
+            return completeUser;
+          }
+        }
+
+        // B. Recherche par scan Firestore pour retrouver par téléphone ou par nom
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        for (const d of querySnapshot.docs) {
+          const cloudData = d.data() as Partial<ManagedUser>;
+          if (cloudData) {
+            const matchUser = this.matchesLoginCredentials(cloudData as ManagedUser, cleanLogin, cleanPin);
+            if (matchUser) {
+              const completeUser = ensureCompleteUser(cloudData, cleanLogin);
+              const users = this.getUsers();
+              const existingIdx = users.findIndex(u => u.id === completeUser.id || u.email.toLowerCase() === completeUser.email.toLowerCase());
+              if (existingIdx !== -1) {
+                users[existingIdx] = completeUser;
+              } else {
+                users.push(completeUser);
+              }
+              this.saveUsers(users);
+              return completeUser;
+            }
           }
         }
       }
@@ -365,6 +512,194 @@ export const UserStore = {
     }
 
     return undefined;
+  },
+
+  // Vérification de correspondance identifiant/téléphone/email + PIN
+  matchesLoginCredentials(u: ManagedUser, cleanLogin: string, cleanPin: string): boolean {
+    const loginLower = cleanLogin.toLowerCase();
+    const loginDigits = cleanLogin.replace(/\D/g, '');
+    const userPhoneDigits = (u.phone || '').replace(/\D/g, '');
+
+    const matchEmail = u.email.toLowerCase() === loginLower;
+    const matchPhoneExact = (u.phone || '').replace(/[\s\-\+\(\)]/g, '') === cleanLogin.replace(/[\s\-\+\(\)]/g, '');
+    const matchPhoneDigits = loginDigits.length >= 6 && userPhoneDigits.length >= 6 && (
+      userPhoneDigits === loginDigits ||
+      userPhoneDigits.endsWith(loginDigits) ||
+      loginDigits.endsWith(userPhoneDigits) ||
+      (loginDigits.startsWith('0') && userPhoneDigits.endsWith(loginDigits.substring(1))) ||
+      (userPhoneDigits.startsWith('0') && loginDigits.endsWith(userPhoneDigits.substring(1)))
+    );
+    const matchIban = u.account.iban.replace(/\s+/g, '').toLowerCase() === cleanLogin.replace(/\s+/g, '');
+    const matchName = u.name.toLowerCase() === loginLower;
+
+    return (matchEmail || matchPhoneExact || matchPhoneDigits || matchIban || matchName) && u.pin === cleanPin;
+  },
+
+  // Recherche d'un utilisateur par son e-mail ou Gmail pour mot de passe oublié
+  async findUserByEmailOrPhone(input: string): Promise<ManagedUser | undefined> {
+    const clean = input.trim().toLowerCase();
+    if (!clean) return undefined;
+
+    // 1. Recherche locale
+    const users = this.getUsers();
+    let found = users.find(u => u.email.toLowerCase() === clean || (clean.length >= 6 && (u.phone || '').replace(/\D/g, '').includes(clean.replace(/\D/g, ''))));
+    if (found) return found;
+
+    // 2. Recherche Firestore Cloud
+    if (db) {
+      try {
+        const safeDocId = clean.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const userDocRef = doc(db, 'users', safeDocId);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const cloudData = userDoc.data() as ManagedUser;
+          if (cloudData) {
+            users.push(cloudData);
+            this.saveUsers(users);
+            return cloudData;
+          }
+        }
+
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        for (const d of querySnapshot.docs) {
+          const cloudData = d.data() as ManagedUser;
+          if (cloudData && (cloudData.email.toLowerCase() === clean || (clean.length >= 6 && (cloudData.phone || '').replace(/\D/g, '').includes(clean.replace(/\D/g, ''))))) {
+            users.push(cloudData);
+            this.saveUsers(users);
+            return cloudData;
+          }
+        }
+      } catch (e) {
+        console.warn('[UserStore] Recherche Firestore par email:', e);
+      }
+    }
+
+    return undefined;
+  },
+
+  // Gestion du code de sécurité 24h valide 15 minutes pour mot de passe oublié
+  getResetSecurityCode(email: string): { code: string; isNew: boolean; remainingSeconds: number; validUntil: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    const storageKey = `pwd_reset_code_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const now = Date.now();
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+
+    if (typeof window !== 'undefined') {
+      try {
+        const existingRaw = localStorage.getItem(storageKey);
+        if (existingRaw) {
+          const parsed = JSON.parse(existingRaw);
+          // Si généré il y a moins de 24h, on conserve le code généré pour la fenêtre de 24h
+          const timeSinceGeneration = now - parsed.generatedAt;
+          if (timeSinceGeneration < TWENTY_FOUR_HOURS_MS) {
+            // Est-il encore dans ses 15 minutes de validité active ?
+            const remainingMs = Math.max(0, parsed.expiresAt - now);
+            const remainingSeconds = Math.ceil(remainingMs / 1000);
+            return {
+              code: parsed.code,
+              isNew: false,
+              remainingSeconds,
+              validUntil: new Date(parsed.expiresAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+            };
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Génération d'un nouveau code à 6 chiffres
+    const newCode = `NDB-${Math.floor(100000 + Math.random() * 900000)}`;
+    const expiresAt = now + FIFTEEN_MINUTES_MS;
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({
+          code: newCode,
+          generatedAt: now,
+          expiresAt: expiresAt,
+        }));
+      } catch (e) {}
+    }
+
+    return {
+      code: newCode,
+      isNew: true,
+      remainingSeconds: 15 * 60,
+      validUntil: new Date(expiresAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+    };
+  },
+
+  // Mise à jour définitive du mot de passe / PIN dans TOUTES les bases de données (Local, Serveur, Cloud Firestore)
+  async updateUserPassword(email: string, newPin: string): Promise<boolean> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPin = newPin.trim();
+
+    // 1. Mise à jour dans le cache local
+    const users = this.getUsers();
+    let updatedUser: ManagedUser | undefined;
+
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].email.toLowerCase() === cleanEmail) {
+        users[i].pin = cleanPin;
+        users[i] = ensureCompleteUser(users[i], cleanEmail);
+        updatedUser = users[i];
+        break;
+      }
+    }
+
+    if (!updatedUser) {
+      // Rechercher dans Firestore ou créer l'utilisateur complet pour cette adresse
+      try {
+        if (db) {
+          const safeDocId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const userDoc = await getDoc(doc(db, 'users', safeDocId));
+          if (userDoc.exists()) {
+            updatedUser = ensureCompleteUser(userDoc.data() as Partial<ManagedUser>, cleanEmail);
+          }
+        }
+      } catch (e) {}
+
+      if (!updatedUser) {
+        updatedUser = ensureCompleteUser({ email: cleanEmail, pin: cleanPin }, cleanEmail);
+      }
+
+      updatedUser.pin = cleanPin;
+      users.push(updatedUser);
+    }
+
+    this.saveUsers(users);
+
+    // 2. Mise à jour sur l'API serveur
+    try {
+      await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, newPin: cleanPin }),
+      });
+    } catch (err) {
+      console.warn('[UserStore] Envoi mise à jour PIN au serveur différé');
+    }
+
+    // 3. Mise à jour dans Firebase Firestore Cloud pour que le nouveau mot de passe fonctionne immédiatement partout
+    try {
+      if (db && updatedUser) {
+        const safeDocId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+        await setDoc(doc(db, 'users', safeDocId), updatedUser, { merge: true });
+        await setDoc(doc(db, 'users', updatedUser.id), updatedUser, { merge: true });
+      }
+    } catch (err) {
+      console.warn('[UserStore] Mise à jour Firestore PIN différée:', err);
+    }
+
+    // Nettoyer le code temporaire
+    if (typeof window !== 'undefined') {
+      try {
+        const storageKey = `pwd_reset_code_${cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        localStorage.removeItem(storageKey);
+      } catch (e) {}
+    }
+
+    return true;
   },
 
   findUserByCredentials(loginInput: string, pinInput: string): ManagedUser | undefined {
@@ -493,14 +828,16 @@ export const UserStore = {
       status: 'Aktiv',
     };
 
-    // Vérifier si l'utilisateur existe déjà
-    const existingIdx = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
-    if (existingIdx !== -1) {
-      users[existingIdx] = { ...users[existingIdx], ...newUser, id: users[existingIdx].id };
-    } else {
-      users.push(newUser);
+    // Schutz vor Überschreiben: Bestehende Konten niemals löschen oder zurücksetzen!
+    const existing = users.find(
+      u => u.email.toLowerCase() === cleanEmail || 
+      (phone && u.phone && u.phone.replace(/\D/g, '') === phone.replace(/\D/g, '') && phone.replace(/\D/g, '').length >= 6)
+    );
+    if (existing) {
+      return existing;
     }
 
+    users.push(newUser);
     this.saveUsers(users);
     return newUser;
   },

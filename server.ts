@@ -101,6 +101,28 @@ async function startServer() {
     }
   });
 
+  // User Password Reset
+  app.post('/api/auth/reset-password', (req, res) => {
+    try {
+      const { email, newPin } = req.body;
+      if (!email || !newPin) {
+        return res.status(400).json({ success: false, message: 'E-Mail und neues Passwort erforderlich' });
+      }
+
+      const users = db.getAllUsers();
+      const user = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'Konto nicht gefunden' });
+      }
+
+      user.pin = newPin.trim();
+      db.updateUser(user);
+      res.json({ success: true, message: 'Passwort erfolgreich aktualisiert', user });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Update user state (Generic update for balance, transactions, card, application, etc.)
   app.put('/api/users/:id', (req, res) => {
     try {

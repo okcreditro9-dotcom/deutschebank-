@@ -95,7 +95,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
 
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Deutsche Bank AG · Taunusanlage 12, Frankfurt am Main
+              NordDeutscheBank AG · Bundesrepublik Deutschland
             </p>
 
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 pt-2 text-xs text-slate-500 dark:text-slate-400">

@@ -279,8 +279,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                         {tx.status === 'ausstehend' && (
                           <>
                             <span aria-hidden="true">·</span>
-                            <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                              Vorgemerkt
+                            <span className="text-amber-700 dark:text-amber-300 font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 border border-amber-300 dark:border-amber-800 text-[10px]">
+                              {tx.purpose.includes('Kreditantrag') ? 'Kreditantrag in Prüfung' : 'Vorgemerkt'}
                             </span>
                           </>
                         )}
@@ -299,8 +299,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                       >
                         {formatEuro(tx.amount)}
                       </span>
-                      <span className="text-[10px] text-slate-400">
-                        {tx.status === 'gebucht' ? 'Gebucht' : 'Ausstehend'}
+                      <span className={`text-[10px] font-semibold ${
+                        tx.status === 'gebucht' 
+                          ? 'text-slate-400' 
+                          : 'text-amber-600 dark:text-amber-400 font-bold'
+                      }`}>
+                        {tx.status === 'gebucht' ? 'Gebucht' : (tx.purpose.includes('Kreditantrag') ? 'In Prüfung' : 'Ausstehend')}
                       </span>
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:translate-x-0.5 transition-transform" />

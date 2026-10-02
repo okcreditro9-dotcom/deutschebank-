@@ -29,6 +29,7 @@ import { SecurityModal } from './components/modals/SecurityModal';
 import { HelpModal } from './components/modals/HelpModal';
 import { DatenschutzModal } from './components/modals/DatenschutzModal';
 import { WhatsAppSupportModal } from './components/modals/WhatsAppSupportModal';
+import { LoanSubmittedModal } from './components/modals/LoanSubmittedModal';
 import { MessageCircle } from 'lucide-react';
 
 // Mock Data & Types
@@ -76,6 +77,7 @@ export default function App() {
   const [credit, setCredit] = useState<CreditAccount | null>(INITIAL_CREDIT);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [application, setApplication] = useState<LoanApplication | null>(null);
+  const [loanSubmittedApp, setLoanSubmittedApp] = useState<LoanApplication | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [standingOrders, setStandingOrders] = useState<StandingOrder[]>([]);
   const [documents] = useState(INITIAL_DOCUMENTS);
@@ -217,12 +219,33 @@ export default function App() {
   // Handler de demande de prêt
   const handleLoanApplicationSuccess = (newApp: LoanApplication) => {
     setApplication(newApp);
-    setSubView('antragstatus');
+    setSubView(null); // Quitter immédiatement le formulaire pour ne pas rester bloqué sur la page
 
+    // 1. Enregistrer immédiatement l'opération dans l'historique des transactions
+    const loanTx: Transaction = {
+      id: `tx-loan-${Date.now()}`,
+      recipientOrSender: 'NordDeutscheBank Kreditabteilung',
+      iban: account.iban,
+      bic: 'NDEBDEFFXXX',
+      purpose: `Kreditantrag ${newApp.id} (${newApp.loanDetails.purpose}) – In Prüfung`,
+      amount: newApp.loanDetails.amount,
+      type: 'income',
+      date: new Date().toLocaleDateString('de-DE'),
+      timestamp: Date.now(),
+      category: 'Finanzen & Kredit',
+      status: 'ausstehend', // Marqué comme ausstehend (en attente de décision)
+      referenceId: newApp.id,
+    };
+
+    const updatedTxList = [loanTx, ...transactions];
+    setTransactions(updatedTxList);
+
+    // 2. Mettre à jour l'utilisateur et synchroniser avec Firestore
     if (currentUser.id) {
       const user = UserStore.getUserById(currentUser.id);
       if (user) {
         user.application = newApp;
+        user.transactions = updatedTxList;
         if (newApp.documents?.idDocumentData) {
           user.idDocument = {
             name: newApp.documents.idDocumentName || 'Deutscher_Personalausweis.svg',
@@ -234,17 +257,22 @@ export default function App() {
         }
         UserStore.updateUser(user);
       }
+      saveTransactionToFirestore(currentUser.id, loanTx).catch((e) => console.warn('Firestore loan tx status:', e));
     }
 
+    // 3. Notification officielle
     const newNotif: AppNotification = {
       id: `notif-app-${Date.now()}`,
       title: 'Kreditantrag eingereicht',
-      message: `Ihr Antrag ${newApp.id} über ${newApp.loanDetails.amount.toFixed(2)} € wurde mit deutschem Staatsbürgerschaftsnachweis erfolgreich eingereicht.`,
+      message: `Ihr Antrag ${newApp.id} über ${newApp.loanDetails.amount.toFixed(2)} € wurde eingereicht. Nach finaler Bewilligung wird der Betrag direkt gutgeschrieben.`,
       timestamp: 'Gerade eben',
       isRead: false,
       category: 'credit',
     };
     setNotifications((prev) => [newNotif, ...prev]);
+
+    // 4. Afficher la boîte de dialogue explicative officielle demandée par le client
+    setLoanSubmittedApp(newApp);
   };
 
   const handleStartApplicationWithParams = (amount: number, termMonths: number, purpose: string) => {
@@ -633,6 +661,23 @@ export default function App() {
               application={application}
               onClose={() => setSubView(null)}
               onShowToast={addToast}
+            />
+          )}
+
+          {loanSubmittedApp && (
+            <LoanSubmittedModal
+              application={loanSubmittedApp}
+              onClose={() => setLoanSubmittedApp(null)}
+              onGoToTransactions={() => {
+                setLoanSubmittedApp(null);
+                setSubView(null);
+                setActiveTab('transactions');
+              }}
+              onGoToHome={() => {
+                setLoanSubmittedApp(null);
+                setSubView(null);
+                setActiveTab('home');
+              }}
             />
           )}
 

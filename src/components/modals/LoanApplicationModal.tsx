@@ -217,8 +217,8 @@ export const LoanApplicationModal: React.FC<LoanApplicationModalProps> = ({
       const newApplication: LoanApplication = {
         id: newContractId,
         currentStep: 3,
-        status: 'genehmigt',
-        statusLabel: 'Sofortentscheid: Vorläufig bewilligt',
+        status: 'in_pruefung',
+        statusLabel: 'In Prüfung durch die Kreditabteilung',
         submittedAt: dateStr,
         updatedAt: dateStr,
         loanDetails: {
@@ -298,8 +298,8 @@ export const LoanApplicationModal: React.FC<LoanApplicationModalProps> = ({
       setIsSubmitting(false);
       onSubmitSuccess(newApplication);
       onShowToast(
-        'Kreditantrag bewilligt!',
-        `Ihr Antrag über ${formatEuro(numericAmount)} wurde mit 2% Bankprovision genehmigt.`,
+        'Kreditantrag eingereicht!',
+        `Ihr Antrag über ${formatEuro(numericAmount)} wurde erfolgreich übermittelt und in Ihrer Historie hinterlegt.`,
         'success'
       );
       onClose();

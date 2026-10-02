@@ -226,8 +226,8 @@ export const CreditView: React.FC<CreditViewProps> = ({
       const newApplication: LoanApplication = {
         id: newContractId,
         currentStep: 3,
-        status: 'genehmigt',
-        statusLabel: 'Sofortentscheid: Vorläufig bewilligt',
+        status: 'in_pruefung',
+        statusLabel: 'In Prüfung durch die Kreditabteilung',
         submittedAt: dateStr,
         updatedAt: dateStr,
         loanDetails: {
@@ -305,13 +305,13 @@ export const CreditView: React.FC<CreditViewProps> = ({
       };
 
       setIsSubmitting(false);
+      setShowApplicationForm(false);
       if (onSubmitSuccess) {
         onSubmitSuccess(newApplication);
       }
-      setShowApplicationForm(false);
       onShowToast(
-        'Kreditantrag bewilligt!',
-        `Ihr Antrag über ${formatEuro(numericAmount)} wurde mit 2% Bankprovision genehmigt.`,
+        'Kreditantrag eingereicht!',
+        `Ihr Antrag über ${formatEuro(numericAmount)} wurde übermittelt und in Ihrer Historie hinterlegt.`,
         'success'
       );
     }, 2100);

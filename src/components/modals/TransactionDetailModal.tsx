@@ -111,9 +111,22 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
               {transaction.recipientOrSender}
             </p>
 
-            <span className="inline-block mt-2 text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3 py-1 rounded-full">
-              Status: {transaction.status === 'gebucht' ? 'Erfolgreich gebucht' : 'Vorgemerkt / In Bearbeitung'}
+            <span className={`inline-block mt-2 text-[11px] font-semibold px-3 py-1 rounded-full ${
+              transaction.status === 'gebucht'
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-800'
+            }`}>
+              Status: {transaction.status === 'gebucht' ? 'Erfolgreich gebucht' : (transaction.purpose.includes('Kreditantrag') ? 'Kreditantrag in manueller Prüfung' : 'Vorgemerkt / In Bearbeitung')}
             </span>
+
+            {transaction.purpose.includes('Kreditantrag') && (
+              <div className="p-3.5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 space-y-1 mt-3 text-left">
+                <span className="font-bold block text-emerald-800 dark:text-emerald-300">Hinweis zur Auszahlung:</span>
+                <p className="text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-200">
+                  Sobald dieser Antrag bewilligt wird, wird der Betrag direkt Ihrem Kontostand gutgeschrieben. Sollte der Antrag abgelehnt werden oder Rückfragen bestehen, sehen Sie den Bescheid hier in Ihrer Historie.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Details Table */}

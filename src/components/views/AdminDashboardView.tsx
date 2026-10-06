@@ -139,6 +139,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [newUserInitialBalance, setNewUserInitialBalance] = useState('0');
 
   const reloadUsers = async () => {
+    await UserStore.syncFromFirestore();
     const list = await UserStore.syncWithServer();
     setUsers(list);
   };

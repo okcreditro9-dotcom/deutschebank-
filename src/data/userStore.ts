@@ -388,7 +388,47 @@ export const UserStore = {
     return users.find((u) => u.id === id);
   },
 
-  // Synchronisation globale depuis Firebase Firestore Cloud
+  getUserByEmail(email: string): ManagedUser | undefined {
+    const clean = (email || '').trim().toLowerCase();
+    const users = this.getUsers();
+    return users.find((u) => u.email.toLowerCase() === clean);
+  },
+
+  // Récupération ciblée ultra-rapide et directe de l'utilisateur depuis Firestore Cloud
+  async refreshUserFromFirestore(userIdOrEmail: string): Promise<ManagedUser | undefined> {
+    if (typeof window === 'undefined' || !db) return undefined;
+    try {
+      const clean = (userIdOrEmail || '').trim().toLowerCase();
+      const safeDocId = clean.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      // 1. Essai par safeDocId (email)
+      const emailDoc = await getDoc(doc(db, 'users', safeDocId));
+      if (emailDoc.exists()) {
+        const cloudUser = emailDoc.data() as Partial<ManagedUser>;
+        if (cloudUser && cloudUser.email) {
+          const complete = ensureCompleteUser(cloudUser, cloudUser.email);
+          this.updateUser(complete);
+          return complete;
+        }
+      }
+
+      // 2. Essai par id direct
+      const idDoc = await getDoc(doc(db, 'users', userIdOrEmail));
+      if (idDoc.exists()) {
+        const cloudUser = idDoc.data() as Partial<ManagedUser>;
+        if (cloudUser && cloudUser.email) {
+          const complete = ensureCompleteUser(cloudUser, cloudUser.email);
+          this.updateUser(complete);
+          return complete;
+        }
+      }
+    } catch (e) {
+      console.warn('[UserStore] refreshUserFromFirestore différé:', e);
+    }
+    return undefined;
+  },
+
+  // Synchronisation globale depuis Firebase Firestore Cloud (Solde, Transactions, Notifications, Profil)
   async syncFromFirestore(): Promise<void> {
     if (typeof window === 'undefined' || !db) return;
     try {
@@ -404,14 +444,72 @@ export const UserStore = {
               (u) => u.id === cloudUser.id || u.email.toLowerCase() === cloudUser.email.toLowerCase()
             );
             if (idx === -1) {
-              users.push(cloudUser);
+              users.push(ensureCompleteUser(cloudUser, cloudUser.email));
               changed = true;
             } else {
-              // Fusionner intelligemment sans écraser le PIN s'il est plus récent
-              if (cloudUser.pin && cloudUser.pin !== users[idx].pin) {
-                users[idx].pin = cloudUser.pin;
+              // Fusionner intelligemment en intégrant les crédits et modifications apportés par l'administrateur
+              const existing = users[idx];
+
+              // A. Solde et compte crédité par l'admin
+              if (cloudUser.account) {
+                if (
+                  cloudUser.account.balance !== existing.account.balance ||
+                  cloudUser.account.availableBalance !== existing.account.availableBalance ||
+                  cloudUser.account.pendingBalance !== existing.account.pendingBalance
+                ) {
+                  existing.account = {
+                    ...existing.account,
+                    ...cloudUser.account,
+                  };
+                  changed = true;
+                }
+              }
+
+              // B. Nouvelles transactions ajoutées par l'admin ou le système
+              if (Array.isArray(cloudUser.transactions) && cloudUser.transactions.length > 0) {
+                const existingTxIds = new Set((existing.transactions || []).map((t) => t.id));
+                const newTxsFromCloud = cloudUser.transactions.filter((t) => !existingTxIds.has(t.id));
+                if (newTxsFromCloud.length > 0 || cloudUser.transactions.length !== (existing.transactions || []).length) {
+                  existing.transactions = cloudUser.transactions;
+                  changed = true;
+                }
+              }
+
+              // C. Notifications
+              if (Array.isArray(cloudUser.notifications) && cloudUser.notifications.length > 0) {
+                const existingNotifIds = new Set((existing.notifications || []).map((n) => n.id));
+                const newNotifs = cloudUser.notifications.filter((n) => !existingNotifIds.has(n.id));
+                if (newNotifs.length > 0) {
+                  existing.notifications = cloudUser.notifications;
+                  changed = true;
+                }
+              }
+
+              // D. Carte bancaire (ex: déblocage ou statut)
+              if (cloudUser.card) {
+                if (JSON.stringify(cloudUser.card) !== JSON.stringify(existing.card)) {
+                  existing.card = cloudUser.card;
+                  changed = true;
+                }
+              }
+
+              // E. Demande de crédit ou statut de prêt
+              if (cloudUser.credit !== undefined && JSON.stringify(cloudUser.credit) !== JSON.stringify(existing.credit)) {
+                existing.credit = cloudUser.credit;
                 changed = true;
               }
+              if (cloudUser.application !== undefined && JSON.stringify(cloudUser.application) !== JSON.stringify(existing.application)) {
+                existing.application = cloudUser.application;
+                changed = true;
+              }
+
+              // F. PIN si réinitialisé
+              if (cloudUser.pin && cloudUser.pin !== existing.pin) {
+                existing.pin = cloudUser.pin;
+                changed = true;
+              }
+
+              users[idx] = ensureCompleteUser(existing, existing.email);
             }
           }
         });
@@ -843,24 +941,44 @@ export const UserStore = {
   },
 
   updateUser(updated: ManagedUser): void {
+    const safeUser = ensureCompleteUser(updated, updated.email);
     const users = this.getUsers();
-    const idx = users.findIndex((u) => u.id === updated.id);
+    const idx = users.findIndex((u) => u.id === safeUser.id);
     if (idx !== -1) {
-      users[idx] = updated;
+      users[idx] = safeUser;
       this.saveUsers(users);
     } else {
-      users.push(updated);
+      users.push(safeUser);
       this.saveUsers(users);
     }
 
     if (typeof window !== 'undefined') {
-      fetch(`/api/users/${encodeURIComponent(updated.id)}`, {
+      fetch(`/api/users/${encodeURIComponent(safeUser.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated),
+        body: JSON.stringify(safeUser),
       }).catch((err) => {
         console.warn('[UserStore] Synchronisation PUT /api/users/:id différée:', err);
       });
+    }
+
+    // Synchronisation immédiate avec Cloud Firestore
+    if (typeof window !== 'undefined' && db && safeUser) {
+      try {
+        const safeDocId = (safeUser.email || '').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (safeDocId) {
+          setDoc(doc(db, 'users', safeDocId), safeUser, { merge: true }).catch((err) =>
+            console.warn('[UserStore] Firestore sync safeDocId différée:', err)
+          );
+        }
+        if (safeUser.id) {
+          setDoc(doc(db, 'users', safeUser.id), safeUser, { merge: true }).catch((err) =>
+            console.warn('[UserStore] Firestore sync userId différée:', err)
+          );
+        }
+      } catch (err) {
+        console.warn('[UserStore] Firestore push error:', err);
+      }
     }
   },
 

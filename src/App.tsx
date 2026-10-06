@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { BottomNavigation } from './components/BottomNavigation';
 import { ToastContainer, ToastMessage } from './components/Toast';
@@ -31,6 +31,7 @@ import { DatenschutzModal } from './components/modals/DatenschutzModal';
 import { WhatsAppSupportModal } from './components/modals/WhatsAppSupportModal';
 import { LoanSubmittedModal } from './components/modals/LoanSubmittedModal';
 import { MessageCircle } from 'lucide-react';
+import { formatEuro } from './utils/formatters';
 
 // Mock Data & Types
 import { 
@@ -114,34 +115,123 @@ export default function App() {
     localStorage.setItem('aura_dark_mode', darkMode.toString());
   }, [darkMode]);
 
-  // Synchronisation automatique continue avec la base de données centrale (/data/database.json)
+  // 1. Session Persistence: Restaurer la session existante dès le chargement/rechargement de la page (F5 / swipe)
   useEffect(() => {
-    const refreshFromDb = async () => {
-      await UserStore.syncWithServer();
-      if (currentUser.id) {
-        const u = UserStore.getUserById(currentUser.id);
-        if (u) {
-          setAccount(u.account);
-          setTransactions(u.transactions);
-          setCard(u.card);
-          setCredit(u.credit);
-          setApplication(u.application);
-          setNotifications(u.notifications);
-          setStandingOrders(u.standingOrders);
+    const initAndRestoreSession = async () => {
+      try {
+        // Synchroniser d'abord avec Firestore Cloud et le serveur local
+        await UserStore.syncFromFirestore();
+        await UserStore.syncWithServer();
+
+        if (typeof window !== 'undefined') {
+          const savedSessionRaw = localStorage.getItem('aura_active_session');
+          if (savedSessionRaw) {
+            const session = JSON.parse(savedSessionRaw);
+
+            if (session.role === 'admin') {
+              setIsAdminAuthenticated(true);
+              setIsAuthenticated(false);
+              return;
+            }
+
+            if (session.id || session.email) {
+              // Récupérer le compte le plus à jour possible depuis Firestore / UserStore
+              let u = session.id ? UserStore.getUserById(session.id) : undefined;
+              if (!u && session.email) {
+                u = UserStore.getUserByEmail(session.email);
+              }
+              if (!u) {
+                u = await UserStore.refreshUserFromFirestore(session.id || session.email);
+              }
+
+              if (u) {
+                const safe = ensureCompleteUser(u, session.email || u.email);
+                setCurrentUser({ id: safe.id, name: safe.name, email: safe.email });
+                setAccount(safe.account);
+                setTransactions(safe.transactions || []);
+                setCard(safe.card);
+                setCredit(safe.credit || null);
+                setNotifications(safe.notifications || []);
+                setStandingOrders(safe.standingOrders || []);
+                setApplication(safe.application || null);
+                setIsAuthenticated(true);
+              }
+            }
+          }
         }
+      } catch (err) {
+        console.warn('[App] Erreur restauration session:', err);
       }
     };
 
-    refreshFromDb();
-    const interval = setInterval(refreshFromDb, 7000);
-    const onWindowFocus = () => refreshFromDb();
+    initAndRestoreSession();
+  }, []);
+
+  // 2. Synchronisation automatique et continue avec Cloud Firestore et le serveur
+  const refreshUserFromDatabase = useCallback(async (showNotification = false) => {
+    const targetId = currentUser.id;
+    const targetEmail = currentUser.email;
+    if (!targetId && !targetEmail) return;
+
+    try {
+      await UserStore.syncFromFirestore();
+      await UserStore.syncWithServer();
+
+      let u = targetId ? UserStore.getUserById(targetId) : undefined;
+      if (!u && targetEmail) {
+        u = UserStore.getUserByEmail(targetEmail);
+      }
+      if (!u) {
+        u = await UserStore.refreshUserFromFirestore(targetId || targetEmail);
+      }
+
+      if (u) {
+        const safe = ensureCompleteUser(u, targetEmail || u.email);
+        setAccount(safe.account);
+        setTransactions(safe.transactions || []);
+        setCard(safe.card);
+        setCredit(safe.credit || null);
+        setNotifications(safe.notifications || []);
+        setStandingOrders(safe.standingOrders || []);
+        setApplication(safe.application || null);
+
+        if (showNotification) {
+          addToast(
+            'Kontostand aktualisiert',
+            `Ihr aktueller Saldo beträgt ${formatEuro(safe.account.balance)}.`,
+            'success'
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('[App] Erreur synchronisation données:', err);
+    }
+  }, [currentUser.id, currentUser.email]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Polling toutes les 4 secondes pour capter instantanément les crédits de l'administrateur
+    const interval = setInterval(() => {
+      refreshUserFromDatabase(false);
+    }, 4000);
+
+    const onWindowFocus = () => refreshUserFromDatabase(false);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshUserFromDatabase(false);
+      }
+    };
+
     window.addEventListener('focus', onWindowFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onWindowFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [currentUser.id]);
+  }, [isAuthenticated, refreshUserFromDatabase]);
 
   const toggleDarkMode = () => setDarkMode(!darkMode);
 
@@ -341,6 +431,12 @@ export default function App() {
 
     if (managedUser) {
       const safe = ensureCompleteUser(managedUser, email);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(
+          'aura_active_session',
+          JSON.stringify({ id: safe.id, name: safe.name, email: safe.email, role: 'client' })
+        );
+      }
       setCurrentUser({ id: safe.id, name: safe.name, email: safe.email });
       setAccount(safe.account);
       setTransactions(safe.transactions || []);
@@ -352,6 +448,12 @@ export default function App() {
     } else if (isNewUser) {
       // Neuer Kunde ohne fiktive Buchungen
       const newIban = `DE89 3704 0044 ${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(
+          'aura_active_session',
+          JSON.stringify({ email, name, role: 'client' })
+        );
+      }
       setCurrentUser({ name, email });
       setAccount({
         accountHolder: name,
@@ -416,12 +518,18 @@ export default function App() {
       });
     }
 
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aura_active_session', JSON.stringify({ role: 'admin' }));
+    }
     setIsAdminAuthenticated(true);
     setIsAuthenticated(false);
     setViewingAsAdminClient(false);
   };
 
   const handleAdminLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('aura_active_session');
+    }
     setIsAdminAuthenticated(false);
     setIsAuthenticated(false);
     setViewingAsAdminClient(false);
@@ -444,6 +552,9 @@ export default function App() {
   };
 
   const handleClientLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('aura_active_session');
+    }
     setIsAuthenticated(false);
     setIsAdminAuthenticated(false);
     setViewingAsAdminClient(false);
@@ -554,6 +665,7 @@ export default function App() {
                   onOpenSubView={handleOpenSubView}
                   onSelectTransaction={(tx) => setSelectedTransaction(tx)}
                   onShowToast={addToast}
+                  onRefreshData={() => refreshUserFromDatabase(true)}
                 />
               )}
 

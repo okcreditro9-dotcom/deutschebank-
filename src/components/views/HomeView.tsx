@@ -16,7 +16,8 @@ import {
   Sparkles,
   ArrowRight,
   Inbox,
-  MessageCircle
+  MessageCircle,
+  RefreshCw
 } from 'lucide-react';
 import { BankAccount, CreditAccount, Transaction, DebitCard as DebitCardType, NavigationTab, SubViewType } from '../../types/banking';
 import { formatEuro, formatIban } from '../../utils/formatters';
@@ -31,6 +32,7 @@ interface HomeViewProps {
   onOpenSubView: (view: SubViewType) => void;
   onSelectTransaction: (tx: Transaction) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -42,10 +44,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenSubView,
   onSelectTransaction,
   onShowToast,
+  onRefreshData,
 }) => {
   const [hideBalances, setHideBalances] = useState(false);
   const [copiedIban, setCopiedIban] = useState(false);
   const [chartPeriod, setChartPeriod] = useState<'6m' | '30d'>('6m');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    if (onRefreshData) {
+      await onRefreshData();
+    }
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 800);
+  };
 
   // Assurer que le client tombe directement et entièrement sur le solde de son compte dès connexion
   useEffect(() => {
@@ -106,13 +121,27 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Verifiziert
               </span>
             </div>
-            <button
-              onClick={() => setHideBalances(!hideBalances)}
-              className="text-slate-300 hover:text-white transition-colors p-2 rounded-xl hover:bg-white/10 cursor-pointer"
-              title={hideBalances ? 'Beträge einblenden' : 'Beträge ausblenden'}
-            >
-              {hideBalances ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white text-xs font-bold border border-white/20 transition-all cursor-pointer shadow-xs"
+                title="Kontostand aktualisieren"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-400' : 'text-white'}`} />
+                <span className="hidden sm:inline">{isRefreshing ? 'Wird aktualisiert...' : 'Konto aktualisieren'}</span>
+                <span className="sm:hidden">{isRefreshing ? '...' : 'Aktualisieren'}</span>
+              </button>
+
+              <button
+                onClick={() => setHideBalances(!hideBalances)}
+                className="text-slate-300 hover:text-white transition-colors p-2 rounded-xl hover:bg-white/10 cursor-pointer"
+                title={hideBalances ? 'Beträge einblenden' : 'Beträge ausblenden'}
+              >
+                {hideBalances ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           {/* Saldo Display: Texture Blanc Pur et Gros */}
